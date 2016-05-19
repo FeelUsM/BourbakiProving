@@ -1,0 +1,889 @@
+<!DOCTYPE HTML>
+<html>
+
+<head>
+	<meta charset="utf-8">
+	<script src="jquery-2.2.0.js"></script>
+	<script src="parser.js"></script>
+	<script src="propsManager.js"></script>
+</head>
+<body>
+	<ul id="list">
+	</ul>
+<script>
+/*
+Object.defineProperty(Array.prototype, 'last', {
+	enumerable:false,
+	get:function(){
+		return this[this.length-1];
+	}
+})
+*/
+
+function Op(op,args){
+	if(this instanceof Op);else return new Op(op,args);
+	console.assert(['!','||'].indexOf(op)!=-1);
+	this.which = op;
+	this.args = args;
+	return this;
+}
+function not(arg){
+	return new Op('!',[arg]);
+}
+function or(arg1,arg2){
+	return new Op('||',[arg1,arg2]);
+}
+function imp(arg1,arg2){
+	return or(not(arg1),arg2);
+}
+
+	copyProps(Parser,window);
+	var read_prim_expr = (str,pos)=> read_any(str,pos,collect,[
+		(str,pos)=>{
+			var r = read_rgx(str,pos,/^[A-Z_]+/);
+			if(!isGood(r)) return new FatalError(pos.x,'ожидался идентификатор');
+			if(!(r[0] in links)) return new FatalError(pos.x,'не объявлена ссылка '+r[0]);
+			return links[r[0]];
+		},
+		(str,pos)=>{
+			var r = read_seq(str,pos,need(1),[txt('(').exec,expr.exec,txt(')').exec]);
+			if(!isGood(r)) return addErrMessage(r,' - in "(expr)"');
+			return r;
+		}
+	]);
+	var read_expr_not = (str,pos)=> read_any(str,pos,collect,[
+		read_prim_expr,
+		(str,pos)=>{
+			var r = read_seq(str,pos,need(1),[txt('!').exec,read_expr_not]);
+			if(!isGood(r)) return addErrMessage(r,' - in "!expr"');
+			return not(r);
+		}
+	])
+	var read_expr_or = (str,pos)=> read_any(str,pos,collect,[
+		(str,pos)=>{
+			var r = read_seq(str,pos,need(0,2),[read_expr_not,txt('||').exec,read_expr_not]);
+			if(!isGood(r)) return addErrMessage(r,' - in "expr||expr"');
+			return or(r[0],r[1]);
+		},
+		read_expr_not
+	])
+	var read_expr_and = read_expr_or;//	заменен на настоящий ниже
+	var read_expr_imp = (str,pos)=> read_any(str,pos,collect,[
+		(str,pos)=>{
+			var r = read_seq(str,pos,need(0,2),[read_expr_and,txt('=>').exec,read_expr_and]);
+			if(!isGood(r)) return addErrMessage(r,' - in "expr=>expr"');
+			return imp(r[0],r[1]);
+		},
+		read_expr_and
+	])
+	var expr = new Pattern(read_expr_imp);
+function parse(str){
+	var res = expr.exec(str);
+	if(isGood(res)) return res;
+	throw JSON.stringify(res);
+}
+
+function Link(name){
+	if(this instanceof Link); else return new Link(x);
+	this.op = undefined;
+	this.name = name;
+	return this;
+}
+function MatchError(){
+	if(this instanceof MatchError);else return MatchError.apply(Object.create(MatchError.prototype),arguments)//throw 'you are fogot new';
+	this.OK = arguments.length==0;
+	if(this.OK)	return this;
+	var args = Array.prototype.slice.call(arguments);
+	this.what = args.shift();
+	this.args = args;
+	return this;
+}
+OK = MatchError();
+MatchError.prototype.print = function(){
+	if(this.OK) return 'OK'
+	var str = this.what +': ';
+	for(var i=0; i<this.args.length; i++)
+		str += printOp(this.args[i])+', '
+	return str.slice(0,str.length-2);
+}
+function eq_tree(op,pattern){
+	//рекурсивно сравниваем вплоть до адресов линков - они должны совпасть
+	if(op===pattern) return OK;
+	if(pattern instanceof Link || op instanceof Link) return MatchError('different links',op,pattern);
+	if(pattern instanceof Op && op instanceof Op);else throw 'unexpected type of pattern or op';
+	if(pattern.which!=op.which) return MatchError('different operations in links',op,pattern);
+	if(op.which=='!')
+		return eq_tree(op.args[0],pattern.args[0])
+	else if(op.which=='||'){
+		var x = eq_tree(op.args[0],pattern.args[0]);
+		if(!x.OK) return x;
+		return eq_tree(op.args[1],pattern.args[1]);
+	}
+	else throw 'unexpected op\'s type "'+op.which+'"';
+}
+function matchOp(op,pattern){
+	//рекурсивно сравниваем вплоть до линка в паттерне
+	if(pattern instanceof Op && op instanceof Link)	return MatchError('very short op',op,pattern);
+	if(pattern instanceof Op && op instanceof Op)
+		if(op.which!=pattern.which)	return MatchError('different operations',op,pattern);
+		else if(op.which=='!')
+				return matchOp(op.args[0],pattern.args[0])
+			else if(op.which=='||'){
+				var x = matchOp(op.args[0],pattern.args[0]);
+				if(!x.OK) return x;
+				return matchOp(op.args[1],pattern.args[1]);
+			}
+			else throw 'unexpected op\'s type "'+op.which+'"';
+	if(pattern instanceof Link);else throw 'unexpected type of pattern';
+
+	if(pattern.op===undefined) {
+		pattern.op=op;
+		return OK;
+	}
+	else
+		return eq_tree(op,pattern.op)
+}
+
+function Tau(link,op){
+	if(this instanceof Tau);else return new Tau(link,op);
+	this.link=link;
+	this.op=op;
+}
+function Replace(to,from,op){
+	if(this instanceof Replace);else return new Replace(to,from,op);
+	this.to=to;
+	this.from=from;
+	this.op=op;
+}
+
+function printOp(op,parent_prio){
+	if(op instanceof Link)	return op.name;
+	if(op instanceof Op);else return '( '+JSON.stringify(op)+' )';
+	parent_prio = parent_prio===undefined ? 100 : parent_prio;
+	if(op.which=='||' && op.args[0] instanceof Op && op.args[0].which=='!'){
+		if(parent_prio<=2)	return '('+printOp(op.args[0].args[0],2)+'=>'+printOp(op.args[1],2)+')';
+		else return printOp(op.args[0].args[0],2)+'=>'+printOp(op.args[1],2);
+	}
+	if(op.which=='||'){
+		if(parent_prio<=1)	return '('+printOp(op.args[0],1)+'||'+printOp(op.args[1],1)+')';
+		else return printOp(op.args[0],1)+'||'+printOp(op.args[1],1);
+	}
+	if(op.which=='!') 
+		return '!'+printOp(op.args[0],0);
+	else{
+		var strArr = [];
+		for(var i=0; i<op.args.length; i++)
+			strArr.push(printOp(op.args[i]));
+		return '('+op.which+' '+strArr.join(' ')+')'
+	}
+	//throw 'unknown operation';
+}
+Op.prototype.toJSON = function(){
+	return printOp(this);
+}
+
+function Theoreme(links,statement,name){
+	if(this instanceof Theoreme);else return new Theoreme(links,statement);
+	this.links=links;
+	this.st=statement;
+	this.name = name;
+}
+
+//==============================================================
+var DBconstructor = function(){this.nest=0;}
+Object.setPrototypeOf(DBconstructor.prototype, Array.prototype);
+DB = new DBconstructor();
+
+// то же, что console.log, только с отступом
+DBconstructor.prototype.log = function(){
+	var tabs = '';
+	for(var i=0; i<this.nest; i++) tabs+='\t';
+	arguments[0] = tabs+arguments[0];
+	console.log.apply(console,arguments);
+}
+// преобразование теоремы в строку
+DBconstructor.prototype.print = function(i){
+	return '['+i+']'+(this[i].name?this[i].name:'')+': '+printOp(this[i].st);
+}
+
+function addLinks(links,op){
+	if(op instanceof Link){
+		if(links.indexOf(op)==-1)links.push(op);
+		return;
+	}
+	if(op instanceof Op);else throw 'unknown type';
+	if(op.which=='!') addLinks(links,op.args[0])
+	else if(op.which=='||'){
+		addLinks(links,op.args[0]);
+		addLinks(links,op.args[1]);
+	}
+	else throw 'unknown op ('+op.which+')';
+}
+DBconstructor.prototype.addAxiom = function(statement,name){
+	var x = this.add(statement,name);
+	this.log('NEW AXIOME '+this.print(x.no));
+	return x;
+}
+DBconstructor.prototype.add = function(statement,name){
+	var links = [];
+	addLinks(links,statement);
+
+	to_n = this.find(statement);
+	if(to_n!=-1) {
+		this.log('already exist '+printOp(statement)+' : '+this.print(to_n));
+		return {st:statement, no:to_n};
+	}
+
+	var tmp = new Theoreme(links,statement,name)
+	this.push(tmp);
+	return {st:statement, no:this.length-1};
+}
+
+function ProveError(what){
+	Error.call(this, what);
+	this.message = what;
+	this.name = 'ProveError';
+	if (Error.captureStackTrace) {
+		Error.captureStackTrace(this, ProveError);
+	}
+	else {
+		this.stack = (new Error()).stack;
+	}
+}
+ProveError.prototype = Object.create(Error.prototype);
+
+DBconstructor.prototype.find = function(from,hint){
+	var check = (n)=>{
+		this[n].links.forEach((link)=>{link.op=undefined})
+		return matchOp(from,this[n].st);
+	}
+	if(hint!==undefined){
+		var err;
+		if((err = check(hint)).OK)
+			return hint;
+		else{
+			this.log(err.print()+' - in compare to '+printOp(this[i].st));
+			return -1;
+		}
+	}
+	var errors=[];
+	for(var i=this.length-1; i>=0; i--){//здесь реально пригодятся хеши
+		var err;
+		if((err=check(i)).OK){
+			//this.log(printOp(from)+' match to '+printOp(this[i].st))
+			return i;
+		}
+		errors.push(err);
+	}
+	//if(!DB.verbose)	
+	return -1;
+	for(var i=0; i<errors.length; i++){
+		this.log(errors[i].print()+' - in compare to '+printOp(this[i].st));
+	}
+	return -1;
+}
+DBconstructor.prototype.check = function(st){
+	var i = this.find(st);
+	if(i==-1)	throw new ProveError('no matches: '+printOp(st));
+	else this.log(printOp(st)+' match to ('+i+')'+printOp(this[i].st));
+	return i;
+}
+DBconstructor.prototype.prove = function(from,to,hints){
+	hints = hints||{};
+
+	from_n = this.find(from,hints.from);
+	if(from_n==-1){
+		if(this.verbose)
+			this.log('can\'t from '+printOp(from)+' prove '+printOp(to))
+		throw new ProveError('can not find "from": '+printOp(from));
+	} 
+	
+	because_n = this.find(imp(from,to),hints.because);
+	if(because_n==-1){
+		if(this.verbose)
+			this.log('can\'t from '+printOp(from)+' prove '+printOp(to))
+		throw new ProveError('can not find imp("from","to"): '+printOp(imp(from,to)));
+	} 
+	
+	var x = this.add(to,hints.name);
+	this.log('prove '+this.print(x.no)+
+		(hints.from===undefined?' from '+this.print(from_n):
+			this.verbose?' (from '+this.print(from_n)+')':'')+
+		(hints.because===undefined?' because '+this.print(x.no):
+			this.verbose?' (because '+this.print(x.no)+')':'')
+	);
+	return x;
+}
+
+	function forEachSubset(set,fun/*(subset)*/) { // по всем подмножествам (кроме пустого)
+		var set_switch = [];
+		for(var x in set)
+			set_switch.push({name:x,enabled:false})
+		function next_subset(st_sw){
+			for(var i=0; i<st_sw.length; i++)
+				if(st_sw[i].enabled)
+					st_sw[i].enabled = false
+				else{
+					st_sw[i].enabled = true;
+					return true;
+				}
+			return false;
+		}
+		for(;next_subset(set_switch);){
+			var subset={};
+			for(var i =0; i<set_switch.length; i++)// копируем в subset
+				if(set_switch[i].enabled)
+					subset[set_switch[i].name] = set[set_switch[i].name];
+			fun(subset);
+		}
+	}
+	function GCD(m,n) { // НОД двух чисел
+		var factor = 1;
+		while(true){
+			//НОД(0, n) = n; НОД(m, 0) = m; НОД(m, m) = m;
+			if(m==n)
+				if(m==0)	throw 'GCD(0,0)'
+				else return factor*m;
+			if(m==0)	return factor*n;
+			if(n==0)	return factor*m;
+			//НОД(1, n) = 1; НОД(m, 1) = 1;
+			if(m==1 || n==1)	return factor;
+			//Если m, n чётные, то НОД(m, n) = 2*НОД(m/2, n/2);
+			if(!(m&1) && !(n&1)){
+				factor<<=1;
+				m>>=1;
+				n>>=1;
+			}
+			//Если m чётное, n нечётное, то НОД(m, n) = НОД(m/2, n);
+			else if(!(m&1)) m>>=1;
+			//Если n чётное, m нечётное, то НОД(m, n) = НОД(m, n/2);
+			else if(!(n&1)) n>>=1;
+			//Если m, n нечётные и n > m, то НОД(m, n) = НОД((n-m)/2, m);
+			else if(n>m) n = (n-m)>>1;
+			//Если m, n нечётные и n < m, то НОД(m, n) = НОД((m-n)/2, n);			
+			else m = (m-n)>>1;
+		}
+	}
+	function GCD_obj(obj) { // НОД свойств объекта
+		var nod;
+		for(var x in obj){
+			nod = obj[x];
+			break;
+		}
+		for(var x in obj)
+			nod = GCD(nod,obj[x]);
+		return nod;
+	}
+	function forEachDivisor(N,fun/*(divisor)*/) { // по всем делителям (кроме 1)
+		var simple_divs = [];
+		for(var i=2; i*i<=N; i++)//разбиваем N на простые множетели
+			if(N%i==0){
+				simple_divs.push({divisor:i,power:1,used:0});
+				N/=i;
+				while(N%i==0){
+					simple_divs[simple_divs.length-1].power++;
+					N/=i;
+				}
+			}
+		if(N>1) simple_divs.push({divisor:N,power:1,used:0});
+		function next_divisor(sd){
+			for(var i=0; i<sd.length; i++)
+				if(sd[i].used==sd[i].power)
+					sd[i].used = 0
+				else{
+					sd[i].used++;
+					return true;
+				}
+			return false;
+		}
+		for(;next_divisor(simple_divs);){
+			var divisor = 1;
+			for(var i =0; i<simple_divs.length; i++)
+				divisor*=Math.pow(simple_divs[i].divisor,simple_divs[i].used);
+			fun(divisor);
+		}
+	}
+	
+function simplify(tree){ // находит поддерево, повторяющееся 2 или более раз, такое, что 
+	// переменные этих поддеревьев не содержатся вне этих поддеревьев
+	// заменяет эти поддеревья на одну переменную, и возвращает измененное дерево
+	// если не находит, возвращает undefined
+	function forEachSubtree(op,fun/*(op,stat)*/) { // return {size:n,stat:{[name]:m...}}
+		if(op instanceof Link){
+			var link_stat = {};
+			link_stat[op.name] = 1;
+			return {size:1,stat:link_stat};
+		}
+		else if(op instanceof Op);else throw 'unknown type';
+		var stat;
+		if(op.which=='!'){
+			var stat = forEachSubtree(op.args[0],fun);
+			stat.size++;
+		}
+		else if(op.which == '||'){
+			var stat = forEachSubtree(op.args[0],fun)
+			var stat2 = forEachSubtree(op.args[1],fun)
+			stat.size += stat2.size+1;
+			for(x in stat2.stat){
+				if(x in stat.stat)
+					stat.stat[x]+=stat2.stat[x];
+				else
+					stat.stat[x] =stat2.stat[x];
+			}
+		}
+		else throw 'unknown op ('+op.which +')'
+		if(fun) fun(op,stat);
+		return stat;
+	}
+	function stat2string(stat) { // сортирует и в строку
+		var strs = [];
+		for(x in stat)
+			strs.push(x+':'+stat[x]);
+		return strs.sort().join(';')
+	}
+	function makeResonablePredGroups(stat) { // формируем допустимые конфигурации для предгрупп
+		var predGroups = {}; 
+		forEachSubset(stat,function(sub_stat) {
+			var nod = GCD_obj(sub_stat);
+			if(nod>1)
+				forEachDivisor(nod,function(d){
+					var tmp_stat={}
+					for(var x in sub_stat)
+						tmp_stat[x] = sub_stat[x]/d;
+					predGroups[stat2string(tmp_stat)]={}
+				})
+		})
+		return predGroups;
+	}
+	function PredGroup(stat,size){
+		this.stat = stat;
+		this.size = size;
+	}
+	Object.setPrototypeOf(PredGroup.prototype, Array.prototype);
+	PredGroup.prototype.toJSON = function(){
+		var strings = [];
+		for(var i=0; i<this.length; i++)
+			strings.push(printOp(this[i].op));
+		return '('+this.size+','+stat2string(this.stat)+')['+strings.join(',')+']';
+	}
+	function fillPredGroups(tree,predGroups) { // добавляем поддеревья в предгруппы (создаем, если их нет)
+		var doSequence = []; 
+		forEachSubtree(tree,function(op,stat){
+				//console.log(printOp(op)+' -before')
+				//console.log(JSON.stringify(predGroups))
+				//console.log(JSON.stringify(doSequence))
+			var statStr = stat2string(stat.stat);
+			if(statStr in predGroups){
+				var predGroupArr = predGroups[statStr];
+				if(stat.size in predGroupArr){
+					predGroupArr[stat.size].push({op:op,used:false})
+					for(var x in stat.stat)
+						console.assert(predGroupArr[stat.size].stat[x] == stat.stat[x]);
+					console.assert(predGroupArr[stat.size].size == stat.size);
+				}
+				else{
+					var tmp_stat = {};
+					for(var x in stat.stat)
+						tmp_stat[x] = stat.stat[x];
+					predGroupArr[stat.size] = new PredGroup(tmp_stat,stat.size)
+					predGroupArr[stat.size].push({op:op,used:false})
+					if(stat.size in doSequence)
+						doSequence[stat.size].push(predGroupArr[stat.size])
+					else
+						doSequence[stat.size] = [predGroupArr[stat.size]];
+				}
+			}
+				//console.log(printOp(op)+' -after')
+				//console.log(JSON.stringify(predGroups))
+				//console.log(JSON.stringify(doSequence))
+		})
+		return doSequence;
+	}
+	function sortCompressDoSequence(doSequence) { // сортируем предГруппы по размеру
+		var doSequence2 = [];
+		for(var x in doSequence)
+			doSequence2.push(x);
+		doSequence2.sort();
+		for(var i =0; i<doSequence2.length; i++)
+			doSequence2[i] = doSequence[doSequence2[i]]
+		return doSequence2;
+	}
+	function findGroup(doSequence,treeStat) { // ищем группу
+		for(var seq_i=doSequence.length-1; seq_i>=0; seq_i--) // начиная с самых больших поддеревьев
+			for(var seq_j=0; seq_j<doSequence[seq_i].length; seq_j++){
+				var predGroup = doSequence[seq_i][seq_j]; // предГруппа
+				
+				var x; for(x in predGroup.stat) break;
+				console.assert(treeStat[x]%predGroup.stat[x]==0);
+				var needed = treeStat[x]/predGroup.stat[x]; // сколько требуется поддеревьев
+				console.assert(needed>1);
+				var left = predGroup.length; // сколько поддеревьев из предгруппы не использовано
+				while(left>=needed){ 
+					var group = []; // начинаем формировать группу
+					var k;
+					for(k=0; k<predGroup.length; k++) // ищем первый элемент группы
+						if(!predGroup[k].used){
+							group.push(predGroup[k].op);
+							predGroup[k].used = true;
+							left--;
+							break;
+						}
+					var etalone = predGroup[k].op;
+					for(k++; k<predGroup.length && // по всей предГруппе
+							left+group.length>=needed && // пока есть возможность набрать группу
+							group.length<needed // пока группа не набрана
+							; k++) // из предГруппы формируем группу
+						if(!predGroup[k].used && eq_tree(predGroup[k].op,etalone).OK) {
+							group.push(predGroup[k].op);
+							predGroup[k].used = true;
+							left--;
+						}
+					if(group.length==needed)
+						return group;
+				}
+			}
+		return undefined;
+	}
+	function replaceGroup(group,tree) { // заменяет поддеревья из группы на переменную 
+		// в первом поддереве группы найти Link
+		var op;
+		for(op = group[0]; op instanceof Op && op.which=='!' || op.which=='||'; op = op.args[0]) ;
+		var link = op;
+		// в корнях всех поддеревьев группы заменить which на другое
+		for(var i=0; i<group.length; i++)
+			group[i].replace = true;
+		// по всему дереву узлы с другим which заменить на link
+		function replaceOp(op){
+			if(op instanceof Op){
+				if(op.which=='||'){
+					var a,b;
+					if(op.args[0] instanceof Op && op.args[0].replace){
+						delete op.args[0].replace;
+						a = link;
+					}
+					else
+						a = replaceOp(op.args[0]);
+					//else throw 'replace link'
+					if(op.args[1] instanceof Op && op.args[1].replace){
+						delete op.args[1].replace;
+						b = link;
+					}
+					else
+						b = replaceOp(op.args[1]);
+					//else throw 'replace link'
+					return or(a,b);
+				}
+				else if(op.which=='!'){
+					var a;
+					if(op.args[0] instanceof Op && op.args[0].replace){
+						delete op.args[0].replace;
+						a = link;
+					}
+					else
+						a = replaceOp(op.args[0]);
+					return not(a);
+					//else throw 'replace link'
+				}
+				else throw 'unknown op ('+op.which+')';
+				throw 'not return 2';
+			}
+			else if(op instanceof Link)
+				return op;
+			else throw 'unknown type';
+			throw 'not return 1';
+		}
+		return replaceOp(tree);
+	}
+
+	var changed = false;
+	while(true){ // пока можем найти группу
+		var treeStat = forEachSubtree(tree).stat;
+		var predGroups = makeResonablePredGroups(treeStat); 
+			// объект, каждая строка stat индексирует 
+			// объект(массив предГрупп), каждый размер поддерева индексирует 
+			// массив(предГруппа), набор из
+				// объект
+					// op - ссылку на поддерево
+					// used - использовалось ли в группе
+			// и свойства
+				// stat
+				// size
+		var doSequence = fillPredGroups(tree,predGroups); 
+			// массив, каждый размер поддерева индексирует, а птом просто набор из
+			// массив, набор из
+			// указатель на предГруппу
+		//console.log(JSON.stringify(predGroups))
+		//console.log(JSON.stringify(doSequence))
+			
+		doSequence = sortCompressDoSequence(doSequence);
+		//console.log(JSON.stringify(doSequence))
+		var group = findGroup(doSequence,treeStat)
+			//массив ссылок на дерево
+		if(group){
+			/*
+			var strArr = []
+			for(var i=0; i<group.length; i++)
+				strArr.push(printOp(group[i]));
+			console.log(strArr.join(','))
+			*/
+			tree = replaceGroup(group,tree);
+			//console.log(printOp(tree))
+			changed = true;
+		} 
+		else break; // не нашли ни одной группы
+	} 
+	if(changed)	return tree;
+	else return undefined;
+}
+//============================ $3
+//---------------------------- п1
+
+var links = {
+	A: new Link('A'),
+	B: new Link('B'),
+	B_: new Link('B_'),
+	C: new Link('C'),
+	D: new Link('D')
+};
+var A = links.A;
+var B = links.B;
+var B_ = links.B_;
+var C = links.C;
+var D = links.D;
+
+var S1 = DB.addAxiom(parse('A||A=>A'),'S1')
+var S2 = DB.addAxiom(parse('A=>A||B'),'S2')
+var S3 = DB.addAxiom(parse('A||B=>B||A'),'S3')
+var S4 = DB.addAxiom(parse('(A=>B)=>(C||A=>C||B)'),'S4')
+
+function contradiction([A,B],DB) { // A; !A -> B
+	DB.log('contradiction');
+	DB.nest++;
+		var x = DB.prove(not(A),imp(A,B),{because:S2.no});
+	DB.nest--;
+	return DB.prove(A,B,{because:x.no});
+}
+
+//---------------------------- п2
+
+function C6([A,B,C],DB,hints) { // A=>B; B=>C -> A=>C
+	hints = hints||{};
+	DB.log('C6 ['+printOp(A)+','+printOp(B)+','+printOp(C)+'] A=>B; B=>C -> A=>C');
+	DB.nest++;
+		var x = DB.prove(imp(B,C),imp(imp(A,B),imp(A,C)),{from:hints.second,because:S4.no});
+	DB.nest--;
+	return DB.prove(imp(A,B),imp(A,C),{from:hints.first,because:x.no,name:hints.name});
+}
+var C7 = C6([A,or(A,B),or(B,A)],DB,{first:S2.no,second:S3.no,name:'C7'});
+var C8 = C6([A,or(A,A),A],DB,{first:S2.no,second:S1.no,name:'C8'});
+function C9([A,B],DB){
+	return DB.prove(B,imp(A,B),{because:C7.no});
+}
+var C10 = DB.prove(parse('A=>A'),parse('A||!A'),{because:S3.no,name:'C10'})
+var C11 = DB.check(imp(A,not(not(A))));
+			DB.prove(parse('B=>!!B'),parse('!A||B=>!A||!!B'),{from:C11.no,because:S4.no})
+var C12 = C6([parse('!A||B'),parse('!A||!!B'),parse('!B=>!A')],DB,{name:'C12'})
+var pre_C13 = DB.prove(parse('C||!A=>!A||C'),parse('(!B||C=>C||!A)=>(!B||C=>!A||C)'),{because:S4.no});
+function C13([A,B,C],DB){//A=>B -> (B=>C)=>(A=>C)
+	DB.log('C13 ['+printOp(A)+','+printOp(B)+','+printOp(C)+'] A=>B -> (B=>C)=>(A=>C)');
+	DB.nest++;
+		var x = DB.prove(imp(A,B),imp(not(B),not(A)),{because:C12.no});
+		x = DB.prove(imp(not(B),not(A)),imp(or(C,not(B)),or(C,not(A))),{from:x.no,because:S4.no})
+		x = C6([or(not(B),C),or(C,not(B)),or(C,not(A))],DB,{first:S3.no,second:x.no});
+	DB.nest--;
+	return DB.prove(imp(imp(B,C),or(C,not(A))),imp(imp(B,C),imp(A,C)),{from:x.no,because:pre_C13.no});
+}
+C13([imp(B,C),parse('C||!B'),parse('C||!A')],DB)
+C6([parse('A=>B'),parse('!B=>!A'),parse('C||!B=>C||!A')],DB)
+C6([parse('A=>B'),parse('C||!B=>C||!A'),parse('(B=>C)=>C||!A')],DB)
+C6([parse('A=>B'),parse('(B=>C)=>C||!A'),parse('(B=>C)=>(A=>C)')],DB)
+
+//---------------------------- п3
+
+			DB.prove(parse('!A=>(A=>B_)'),parse('((A=>B_)||!A)=>((A=>B_)||(A=>B_))'));
+function C14([A,B,B_],DB){//A=>B; A=>(B=>B_) -> A=>B_
+	DB.log('C14 ['+printOp(A)+','+printOp(B)+','+printOp(B_)+'] A=>B; A=>(B=>B_) -> A=>B_');
+	DB.nest++;
+		var x = C13([A,B,B_],DB);
+		C6([A,imp(B,B_),imp(A,B_)],DB,{second:x.no});
+		DB.prove(imp(A,imp(A,B_)),or(imp(A,B_),not(A)),{because:S3.no});
+		DB.prove(or(imp(A,B_),not(A)),or(imp(A,B_),imp(A,B_)));
+	DB.nest--;
+	return DB.prove(or(imp(A,B_),imp(A,B_)),imp(A,B_));
+}
+function makeTheoreme(links,DB,premise,fun){
+	var real_prove = DB.prove;
+	var fake_nest = DB.nest;
+
+	function fake_prove(from,to){
+		var res;
+		var real_nest = DB.nest;
+		DB.nest = fake_nest;
+		DB.log('fake_prove from '+printOp(from)+' to '+printOp(to));
+		
+		try{
+			DB.prove = real_prove;
+			DB.nest = fake_nest+1;
+				DB.log('try real_prove')
+				res = DB.prove(from,to);
+			DB.nest--;
+			DB.log('fake_proved ----');
+			DB.nest = real_nest;
+			DB.prove = fake_prove;
+			return res;
+		}catch(err){ if(err instanceof ProveError){
+			try{
+				DB.prove = real_prove;
+				DB.nest = fake_nest+1;
+					DB.log('try C6')
+					res = C6([premise,from,to],DB)
+				DB.nest--;
+				DB.log('fake_proved ----');
+				DB.nest = real_nest;
+				DB.prove = fake_prove;
+				return res;
+			}catch(err){ if(err instanceof ProveError){
+				try{
+					DB.prove = real_prove;
+					DB.nest = fake_nest+1;
+						DB.log('try C14')
+						try{
+							DB.nest = fake_nest+2;
+								DB.log('try prove proved')
+								DB.prove(from,imp(premise,from),{because:C7.no});
+								DB.log('proved proved');
+						}catch(err){ if(err instanceof ProveError){
+							DB.prove = real_prove;
+							DB.nest = fake_nest+1;
+						}else throw err;}
+						res = C14([premise,from,to],DB)
+					DB.nest--;
+					DB.log('fake_proved ----');
+					DB.nest = real_nest;
+					DB.prove = fake_prove;
+					return res;
+				}catch(err){ if(err instanceof ProveError){
+					DB.prove = fake_prove;
+					DB.nest = fake_nest;
+					DB.log('fake_prove failed ----');
+					throw err;
+				}else throw err;}
+			}else throw err;}
+		}else throw err;}
+	}
+
+	DB.prove = fake_prove;
+		DB.log('begin makeTheoreme from '+printOp(premise));
+			DB.nest++;
+				var res = fun(links,DB);
+			DB.nest--;
+		DB.log('end makeTheoreme');
+	DB.prove = real_prove;
+	return res;
+}
+
+function C15([A],DB){
+	DB.log('C15 ['+printOp(A)+'] !A=>A -> A');
+	DB.nest++;
+		DB.prove(imp(not(A),A),imp(or(A,not(A)),or(A,A)));
+		DB.prove(or(A,not(A)),or(A,A))
+	DB.nest--;
+	return DB.prove(or(A,A),A);
+}
+var C16 = makeTheoreme([A],DB,not(not(A)),function([A],DB){
+	makeTheoreme([A],DB,not(A),function([A],DB){
+		return contradiction([not(A),A],DB);
+	})
+	return C15([A],DB);
+});
+
+var C17 = makeTheoreme([A,B],DB,parse('!B=>!A'),function([A,B],DB){
+	return makeTheoreme([A,B],DB,A,function([A,B],DB){
+		makeTheoreme([A,B],DB,not(B),function([A,B],DB){
+			DB.prove(not(B),not(A));
+			contradiction([A,B],DB);
+		})
+		return C15([B],DB);
+	})
+});
+
+function C18([A,B,C],DB){
+	DB.log('C18 ['+printOp(A)+','+printOp(B)+','+printOp(C)+'] A||B; A=>C; B=>C -> C');
+	DB.nest++;
+		var x = DB.prove(imp(B,C),imp(or(A,B),or(A,C)),{because:S4.no})
+		var y = DB.prove(imp(A,C),imp(or(C,A),or(C,C)),{because:S4.no})
+		x = DB.prove(or(A,B),or(A,C),{because:x.no});
+		x = DB.prove(or(A,C),or(C,A),{from:x.no,because:S3.no});
+		x = DB.prove(or(C,A),or(C,C),{from:x.no,because:y.no});
+	DB.nest--;
+	return DB.prove(or(C,C),C,{from:x.no,because:S1.no});
+}
+
+//---------------------------- п4
+
+function and(x,y){
+	return not(or(not(x),not(y)));
+}
+	read_expr_and = (str,pos)=> read_any(str,pos,collect,[
+		(str,pos)=>{
+			var r = read_seq(str,pos,need(0,2),[read_expr_or,txt('&&').exec,read_expr_or]);
+			if(!isGood(r)) return addErrMessage(r,' - in "expr&&expr"');
+			return and(r[0],r[1]);
+		},
+		read_expr_or
+	])
+
+function C20([A,B],DB){
+	makeTheoreme([A,B],DB,not(and(A,B)),function([A,B],DB){
+		var x = DB.prove(not(and(A,B)),or(not(A),not(B)),{because:C16.no})
+		DB.prove(A,not(B),{because:x.no});
+		contradiction([B,and(A,B)]);
+	})
+	C15([and(A,B)],DB);
+}
+
+var x = DB.check(parse('!A||!B=>!(A&&B)'))
+var y = C6([not(A),parse('!A||!B'),parse('!(A&&B)')],DB,{first:S2.no,second:x.no})
+var C21_L = DB.prove(y.st,parse('A&&B=>A'),{from:y.no,because:C17.no})
+var y = C6([not(B),parse('!A||!B'),parse('!(A&&B)')],DB,{first:C7.no,second:x.no})
+var C21_R = DB.prove(y.st,parse('A&&B=>B'),{from:y.no,because:C17.no})
+
+if(1)
+for(var i=0; i<DB.length; i++){
+	var op = simplify(DB[i].st);
+	if(op){
+		console.log('['+i+']'+printOp(DB[i].st))
+		console.log('=== '+printOp(op));
+	}
+}
+
+
+
+
+
+
+
+
+//---------------------------- п5
+
+function eqlog(a,b){
+	return and(imp(a,b),imp(b,a));
+}
+
+
+/*todo:
+изменить prove
+	сначала проверяем на already exist
+	птом доказываем и запоминаем
+	do
+		упрощаем мелкое
+	while доказываем по запомненному
+установить везде подсказки, изменить отступы в makeTheoreme
+добавить 2 режима генерации tgf-файлов
+сделать возможность добавлять операции для печати
+доказать все логические утверждения
+переходить к кванторным теориям
+*/
+</script>
+</body>
+</html>
