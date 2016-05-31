@@ -1,0 +1,160 @@
+=== знаковые операции ===
+== 		- тождественно
+(T|x)A		- замена
+$x(R)==$(_|x)R	- и соединить $ с _
+если A объявлено/*"сильно интересуемся"*/ как A{x,y}, то A{B,C}==(B|x)(C|y)A
+
+=== знаки ===
+_, $, //квадратик, тау
+!, ||
+A=>B == !A||B
+A&&B == !(!A||!B)
+A<=>B == (A=>B)&&(B=>A)
+(Exist x)R == ($x(R)|x)R
+(Any x)R == !(Exist x)!R
+(Exist x[A])R == (Exist x)(A&&R)
+(Any x[A])R == !(Exist x[a])!R
+
+буквы
+спец.знаки
+=
+A!=B == !(A=B)
+
+=== CS ===
+CS1.	если x' нет в A			то (B|x)A == (B|x')(x'|x)A
+CS2.	если x,y - разные, y нет в B	то (B|x)(C|y)A == ((B|x)C|y)(B|x)A
+CS3.	если x' нет в A			то $x(A) == $x'((x'|x)A)
+CS4.	если x,y - разные, x нет в B	то (B|y)$x(A) == $x((B|y)A)
+CS5.	(C|x)!A == !(C|x)A
+	(C|x)(A||B) == (C|x)A || (C|x)B
+	(C|x)(A=>B) == (C|x)A => (C|x)B	
+	(C|x)(s A B) == s (C|x)A (C|x)B	  , где s - бинарный спецзнак
+CS6.	(C|x)(A&&B) == (C|x)A && (C|x)B
+CS7.	(C|x)(A<=>B) == (C|x)A <=> (C|x)B
+CS8.	если x' нет в R			то (Exist x)R == (Exist x')(x'|x)R
+					то (Any x)R == (Any x')(x'|x)R
+CS9.	если x,y - разные, x нет в U	то (U|y)(Exist x)R == (Exist x)(U|y)R
+					то (U|y)(Any x)R == (Any x)(U|y)R
+CS10.	если x' нет в A и нет в R	то (Exist x[A])R == (Exist x'[(x'|x)A])(x'|x)R
+					то (Any x[A])R == (Any x'[(x'|x)A])(x'|x)R
+CS11.	если x,y - разные, x нет в U	то (U|y)(Exist x[A])R == (Exist x[(U|x)A])(U|y)R
+					то (U|y)(Any x[A])R == (Any x[(U|x)A])(U|y)R
+
+
+=== CF ===
+CF1.	A||B		- соотношение->соотношение
+CF2.	!A		- соотношение->соотношение
+CF3.	$x(A)		- соотношение->терм
+CF4.	s A B C D	- терм->терм/соотношение(субстантивный/реляционный)
+CF5.	A=>B		- соотношение->соотношение
+CF6.	если y ни где не встречается, то везде на него можно заменить x
+CF7.	(y|x)A		- терм/соотношение->терм/соотношение
+CF8.	(T|x)A 		- терм, терм/соотношение->терм/соотношение
+CF9.	A&&B		- соотношение->соотношение
+CF10.	A<=>B		- соотношение->соотношение
+CF11.	(Exist x)R и (Any x)R - соотношение->соотношение
+CF12.	(Exist x[A])R и (Any x[A])R - соотношение, соотношение->соотношение
+
+->	- правило вывода
+можно делать предположение, получать результат, и потом получать правило вывода результата из предположения
+=== S ===
+S1.	A||A 	=> A
+S2.	A 	=> A||B
+S3.	A||B 	=> B||A
+S4.	(A=>B) 	=> (C||A => C||B)
+S5.	(T|x)R 	=> (Exist x)R
+S6.	(T=U) 	=> (R{T}<=>R{U})
+S7.	(Any x)(R<=>S) => ($x(R)=$x(S))
+
+=== C ===
+C1.	A; A=>B -> B
+C2.	A - теорема Г -> (T|x)A - теорема (T|x)Г
+C3.	A; x - не константа -> (T|x)A
+C4.	если Г' сильнее Г, то все теоремы Г являются теоремами Г'
+C5.	если в Г во всех аксиомах все константы заменить термамми, и это будут теоремы в Г'
+	то если то же сделать с некоторой теоремой Г, то она будет теормемой Г'
+
+contradiction.	A; !A -> B
+C6.	A=>B; B=>C -> A=>C
+C7.	B => A||B
+C8.	A=>A
+C9.	B -> A=>B
+C10.	A||!A
+C11.	A=>!!A
+C12.	(A=>B)=>(!B=>!A)
+C13.	A=>B -> (B=>C)=>(A=>C)
+C14.	A=>B; A=>(B=>C) -> A=>C
+	(A->B)->A=>B
+	(A;B;C->D)->A=>(B=>(C=>D))
+C15.	!A=>A -> A
+C16.	!!A=>A
+C17.	(!B=>!A)=>(A=>B)
+C18.	A||B; A=>C; B=>C -> C
+C19.	x - не константа, x нет в B; известен T: (T|x)A; A=>B -> B
+C20.	A; B -> A&&B
+C21.	A&&B=>A
+	A&&B=>B
+C22.	A<=>B -> B<=>A
+	A<=>B; B<=>C -> A<=>C
+C23.	A<=>B	-> !A<=>!B
+		-> (A=>C)<=>(B=>C)
+		-> (C=>A)<=>(C=>B)
+		-> A&&C<=>B&&C
+		-> A||C<=>B||C
+C24.	!!A<=>A
+	(A=>B)<=>(!B=>!A)
+	A&&A<=>A
+	A&&B<=>B&&A
+	A&&(B&&C)<=>(A&&B)&&C
+	A||B<=>!(!A&&!B)
+	A||A<=>A
+	A||B<=>B||A
+	A||(B||C)<=>(A||B)||C
+	A&&(B||C)<=>A&&B||A&&C
+	A||B&&C<=>(A||B)&&(A||C)
+	A&&!B<=>!(A=>B)
+	A||B<=>!A=>B
+C25.	A -> A&&B<=>B
+	!A -> A||B<=>B
+	
+C26.	(Any x)R <=> ($x(!R)|x)R
+C27.	R; x - не константа -> (Any x)R
+C28.	!(Any x)R <=> (Exist x)!R
+C29.	!(Exist x)R <=> (Any x)!R
+C30.	(Any x)R => (T|x)R
+C31.	x - не константа; R=>S -> (Any x)R => (Any x)S
+	x - не константа; R=>S -> (Exist x)R => (Exist x)S
+	x - не константа; R<=>S -> (Any x)R <=> (Any x)S
+	x - не константа; R<=>S -> (Exist x)R <=> (Exist x)S
+C32.	(Any x)(R&&S) <=> (Any x)R && (Any x)S
+	(Exist x)(R||S) <=> (Exist x)R || (Exist x)S
+C33.	(Any x)(R||S) <=> R||(Any x)S
+	(Exist x)(R&&S) <=> R&&(Exist x)S
+C34.	(Any x)(Any y)R <=> (Any y)(Any x)R
+	(Exist x)(Exist y)R <=> (Exist y)(Exist x)R
+	(Exist x)(Any y)R => (Any y)(Exist x)R
+	
+C35.	(Any x[A])R <=> (Any x)(A=>R)
+C36.	x - не константа; A=>R -> (Any x[A])R
+C37.(?)	!(A=>R)=>(A=>R) -> (Any x[A])R
+C38.	!(Any x[A])R <=> (Exist x[A])!R
+	!(Exist x[A])R <=> (Any x[A])!R
+C39.	x - не константа; A=>(R=>S) -> (Any x[A])R => (Any x[A])S
+	x - не константа; A=>(R=>S) -> (Exist x[A])R => (Exist x[A])S
+	x - не константа; A=>(R<=>S) -> (Any x[A])R <=> (Any x[A])S
+	x - не константа; A=>(R<=>S) -> (Exist x[A])R <=> (Exist x[A])S
+C40.	(Any x[A])(R&&S) <=> (Any x[A])R && (Any x[A])S
+	(Exist x[A])(R||S) <=> (Exist x[A])R || (Exist x[A])S
+C41.	(Any x[A])(R||S) <=> R||(Any x[A])S
+	(Exist x[A])(R&&S) <=> R&&(Exist x[A])S
+C42.	(Any x[A])(Any y[B])R <=> (Any y[B])(Any x[A])R
+	(Exist x[A])(Exist y[B])R <=> (Exist y[B])(Exist x[A])R
+	(Exist x[A])(Any y[B])R => (Any y[B])(Exist x[A])R
+
+C43.	(T=U && R{T}) <=> (T=U && R{U})
+C44.	T=U => V{T}=V{U}
+
+=== T ===
+T1.	x=x
+T2.	x=y <=> y=x
+T3.	x=y && y=z => x=z
