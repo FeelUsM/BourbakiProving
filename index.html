@@ -1,4 +1,8 @@
 <!DOCTYPE HTML>
+<!-- 
+Bourbaki proving 
+(c) FeelUs
+-->
 <html>
 
 <head>
@@ -8,6 +12,11 @@
 	<script src="propsManager.js"></script>
 </head>
 <body>
+	это система проверки доказательств<br>
+	доказательство теории продолжайте в коде<br>
+	если в нем будет ошибка, произойдет исключение, которое можно увидеть в консоли браузера<br>
+	пункты, начинающиеся с &lt...&gt - можно разворачивать<br>
+	<button onclick="show_all()">развернуть все</button><button onclick="hide_all()">свернуть все</button>
 	<ul id="list">
 	</ul>
 <script>
@@ -28,11 +37,15 @@ function Op(op,args){
 	return this;
 }
 function not(arg){
+	if(typeof arg === 'string') arg = parse(arg)
 	return new Op('!',[arg]);
 }
 function or(arg1,arg2){
+	if(typeof arg1 === 'string') arg1 = parse(arg1)
+	if(typeof arg2 === 'string') arg2 = parse(arg2)
 	return new Op('||',[arg1,arg2]);
 }
+//implication
 function imp(arg1,arg2){
 	return or(not(arg1),arg2);
 }
@@ -76,6 +89,7 @@ function imp(arg1,arg2){
 		},
 		read_expr_and
 	])
+	// добавляется eql
 	var expr = new Pattern(read_expr_imp);
 function parse(str){
 	var res = expr.exec(str);
@@ -84,9 +98,14 @@ function parse(str){
 }
 
 function Link(name){
-	if(this instanceof Link); else return new Link(x);
-	this.op = undefined;
-	this.name = name;
+	if(this instanceof Link); else return new Link(name);
+	this.op = undefined; // паттерн
+	if(typeof name !== 'string'){
+		this.link = name; // паттерн для точного соответствия
+		if(name instanceof Link)
+			this.name = '['+name.name+']';
+	}
+	else this.name = name;
 	return this;
 }
 function MatchError(){
@@ -136,6 +155,8 @@ function matchOp(op,pattern){
 			else throw 'unexpected op\'s type "'+op.which+'"';
 	if(pattern instanceof Link);else throw 'unexpected type of pattern';
 
+	if(pattern.link!==undefined)
+		return eq_tree(op,pattern.link)
 	if(pattern.op===undefined) {
 		pattern.op=op;
 		return OK;
@@ -156,21 +177,35 @@ function Replace(to,from,op){
 	this.op=op;
 }
 
+var printArray = [];
+	printArray.push(function(op,parent_prio) { // !
+		var cur_prio = 0;
+		if(op.which=='!') 
+			return '!'+printOp(op.args[0],cur_prio);
+	});
+	printArray.push(function(op,parent_prio) { // ||
+		var cur_prio = 1;
+		if(op.which=='||'){
+			if(parent_prio<=cur_prio)	return '('+printOp(op.args[0],cur_prio)+'||'+printOp(op.args[1],cur_prio)+')';
+			else return printOp(op.args[0],cur_prio)+'||'+printOp(op.args[1],cur_prio);
+		}
+	})
+	printArray.push(function(op,parent_prio) { // =>
+		var cur_prio = 3;
+		if(op.which=='||' && op.args[0] instanceof Op && op.args[0].which=='!') {
+			if(parent_prio<=cur_prio)	return '('+printOp(op.args[0].args[0],cur_prio)+'=>'+printOp(op.args[1],cur_prio)+')';
+			else return printOp(op.args[0].args[0],cur_prio)+'=>'+printOp(op.args[1],cur_prio);
+		}
+	})
 function printOp(op,parent_prio){
 	if(op instanceof Link)	return op.name;
 	if(op instanceof Op);else return '( '+JSON.stringify(op)+' )';
 	parent_prio = parent_prio===undefined ? 100 : parent_prio;
-	if(op.which=='||' && op.args[0] instanceof Op && op.args[0].which=='!'){
-		if(parent_prio<=2)	return '('+printOp(op.args[0].args[0],2)+'=>'+printOp(op.args[1],2)+')';
-		else return printOp(op.args[0].args[0],2)+'=>'+printOp(op.args[1],2);
+	for(var i=printArray.length-1; i>=0; i--){
+		var res = printArray[i](op,parent_prio)
+		if(res) return res;
 	}
-	if(op.which=='||'){
-		if(parent_prio<=1)	return '('+printOp(op.args[0],1)+'||'+printOp(op.args[1],1)+')';
-		else return printOp(op.args[0],1)+'||'+printOp(op.args[1],1);
-	}
-	if(op.which=='!') 
-		return '!'+printOp(op.args[0],0);
-	else{
+	{
 		var strArr = [];
 		for(var i=0; i<op.args.length; i++)
 			strArr.push(printOp(op.args[i]));
@@ -182,10 +217,10 @@ Op.prototype.toJSON = function(){
 	return printOp(this);
 }
 
-function Theoreme(links,statement,name){
-	if(this instanceof Theoreme);else return new Theoreme(links,statement);
+function Theoreme(links,st,name){
+	if(this instanceof Theoreme);else return new Theoreme(links,st);
 	this.links=links;
-	this.st=statement;
+	this.st=st;
 	this.name = name;
 }
 
@@ -195,15 +230,65 @@ Object.setPrototypeOf(DBconstructor.prototype, Array.prototype);
 DB = new DBconstructor();
 
 // то же, что console.log, только с отступом
+	function hide($li,$list){
+		$list.hide().addClass('hidden');
+		$li.prepend('<span>&lt...&gt </span>');
+	}
+	function show($li,$list){
+		$list.show().removeClass('hidden');
+		$li.children().first().remove();
+	}
+function show_all(){
+	$('li').each((index,li)=>{
+		var $li = $(li)
+		var $list = $li.children().last();
+		if($list.length)
+			if($list.hasClass('hidden'))	show($li,$list)
+	})
+}
+function hide_all(){
+	$('li').each((index,li)=>{
+		var $li = $(li)
+		var $list = $li.children().last();
+		if($list.length)
+			if(!$list.hasClass('hidden'))	hide($li,$list)
+	})
+}
 DBconstructor.prototype.log = function(){
+	if(this.log_disable) return;
+	/*
 	var tabs = '';
 	for(var i=0; i<this.nest; i++) tabs+='\t';
 	arguments[0] = tabs+arguments[0];
-	console.log.apply(console,arguments);
+	*/
+	if(this.nest==0)
+		console.log.apply(console,arguments);
+	
+	var $list = $('#list');
+	for(var i=0; i<this.nest; i++){
+		var $li = $list.children().last();
+		if($li.has('ul').length==0){
+			$li.append('<ul></ul>');
+			hide($li,$li.children().last())
+		}
+		$list = $li.children().last();
+	}
+	$('<li>'+arguments[0]+'</li>').appendTo($list).click(function(event){
+		var $li = $(this)
+		var $list = $li.children().last();
+		if($list.length){
+			if($list.hasClass('hidden'))	show($li,$list)
+			else							hide($li,$list)
+		}
+		event.stopPropagation();
+	})
 }
 // преобразование теоремы в строку
 DBconstructor.prototype.print = function(i){
 	return '['+i+']'+(this[i].name?this[i].name:'')+': '+printOp(this[i].st);
+}
+DBconstructor.prototype.shortPrint = function(i){
+	return '['+i+']'+(this[i].name?this[i].name:'');
 }
 
 function addLinks(links,op){
@@ -219,24 +304,25 @@ function addLinks(links,op){
 	}
 	else throw 'unknown op ('+op.which+')';
 }
-DBconstructor.prototype.addAxiom = function(statement,name){
-	var x = this.add(statement,name);
+DBconstructor.prototype.addAxiom = function(st,name){
+	if(typeof st === 'string') st = parse(st)
+	to_n = this.find(st);
+	if(to_n!=-1) {
+		this.log('already exist '+printOp(st)+' : '+this.print(to_n));
+		return {st:st, no:to_n};
+	}
+	
+	var x = this.add(st,name);
 	this.log('NEW AXIOME '+this.print(x.no));
 	return x;
 }
-DBconstructor.prototype.add = function(statement,name){
+DBconstructor.prototype.add = function(st,name){
+
 	var links = [];
-	addLinks(links,statement);
-
-	to_n = this.find(statement);
-	if(to_n!=-1) {
-		this.log('already exist '+printOp(statement)+' : '+this.print(to_n));
-		return {st:statement, no:to_n};
-	}
-
-	var tmp = new Theoreme(links,statement,name)
+	addLinks(links,st);
+	var tmp = new Theoreme(links,st,name)
 	this.push(tmp);
-	return {st:statement, no:this.length-1};
+	return {st:st, no:this.length-1};
 }
 
 function ProveError(what){
@@ -251,23 +337,40 @@ function ProveError(what){
 	}
 }
 ProveError.prototype = Object.create(Error.prototype);
-
-DBconstructor.prototype.find = function(from,hint){
-	var check = (n)=>{
-		this[n].links.forEach((link)=>{link.op=undefined})
-		return matchOp(from,this[n].st);
+function ManualProveError(what){
+	Error.call(this, what);
+	this.message = what;
+	this.name = 'ManualProveError';
+	if (Error.captureStackTrace) {
+		Error.captureStackTrace(this, ManualProveError);
 	}
-	if(hint!==undefined){
+	else {
+		this.stack = (new Error()).stack;
+	}
+}
+ManualProveError.prototype = Object.create(Error.prototype);
+
+DBconstructor.prototype.find = function(from,hint_no){
+	var self = this;
+	function check(n){
+		//console.log('check '+n)
+		if(self.no_scheme) return eq_tree(from,self[n].st);// for makeTheoreme
+		self[n].links.forEach((link)=>{link.op=undefined})
+		return matchOp(from,self[n].st);
+	}
+	if(hint_no!==undefined){
+		if((typeof hint_no)!='number' || hint_no<0 || hint_no>=this.length)
+			throw new ProveError('bad hint_no: '+JSON.stringify(hint_no))
 		var err;
-		if((err = check(hint)).OK)
-			return hint;
+		if((err = check(hint_no)).OK)
+			return hint_no;
 		else{
-			this.log(err.print()+' - in compare to '+printOp(this[i].st));
+			this.log(err.print()+' - in compare to '+printOp(this[hint_no].st));
 			return -1;
 		}
 	}
 	var errors=[];
-	for(var i=this.length-1; i>=0; i--){//здесь реально пригодятся хеши
+	for(var i=this.length-1; i>=0; i--) { // здесь реально пригодятся хеши
 		var err;
 		if((err=check(i)).OK){
 			//this.log(printOp(from)+' match to '+printOp(this[i].st))
@@ -282,36 +385,115 @@ DBconstructor.prototype.find = function(from,hint){
 	}
 	return -1;
 }
-DBconstructor.prototype.check = function(st){
-	var i = this.find(st);
+DBconstructor.prototype.check = function(st,hint){
+	if(typeof st === 'string') st = parse(st)
+	var i = hint ? this.find(st,hint.no) : this.find(st);
 	if(i==-1)	throw new ProveError('no matches: '+printOp(st));
-	else this.log(printOp(st)+' match to ('+i+')'+printOp(this[i].st));
-	return i;
+	else this.log(printOp(st)+' match to '+this.print(i));
+	return {st:st, no:i};
 }
-DBconstructor.prototype.prove = function(from,to,hints){
-	hints = hints||{};
+DBconstructor.prototype.prove = function(from, to, {from:from_no_obj, because:because_no_obj, name}={}){
+	if(typeof from === 'string') from = parse(from)
+	if(typeof to === 'string') to = parse(to)
+	// проверка подсказок
+	var from_n;
+	if(from_no_obj){
+		if(typeof from_no_obj =='object' && 'no' in from_no_obj){
+			from_n = this.find(from,from_no_obj.no);
+			if(from_n==-1){
+				if(this.verbose)
+					this.log('can\'t from '+printOp(from)+' prove '+printOp(to))
+				throw new ProveError('"from" ('+printOp(from)+') don\'t match specified '+this.print(from_no_obj.no));
+			} 
+		}
+		else throw 'from_no_obj has no "no" member';
+	}
+	var because_n;
+	if(because_no_obj){
+		if(typeof because_no_obj =='object' && 'no' in because_no_obj){
+			because_n = this.find(imp(from,to),because_no_obj.no);
+			if(because_n==-1){
+				if(this.verbose)
+					this.log('can\'t from '+printOp(from)+' prove '+printOp(to))
+				throw new ProveError('imp("from","to") ('+printOp(imp(from,to))+') don\'t match specified '+
+					this.print(because_no_obj.no));
+			} 
+		}
+		else throw 'because_no_obj has no "no" member';
+	}
+	
+	// проверка на already exist
+	to_n = this.find(to);
+	if(to_n!=-1) {
+		this.log('already exist '+printOp(to)+' : '+this.print(to_n)+
+			(!from_no_obj?' from undefined ':
+				' from '+this.shortPrint(from_n))+
+			(!because_no_obj?' because undefined ':
+				' because '+this.shortPrint(because_n)));
+		return {st:to, no:to_n};
+	}
 
-	from_n = this.find(from,hints.from);
-	if(from_n==-1){
-		if(this.verbose)
-			this.log('can\'t from '+printOp(from)+' prove '+printOp(to))
-		throw new ProveError('can not find "from": '+printOp(from));
-	} 
+	// поиск
+	if(from_n===undefined){
+		from_n = this.find(from);
+		if(from_n==-1){
+			if(this.verbose)
+				this.log('can\'t from '+printOp(from)+' prove '+printOp(to))
+			throw new ProveError('can not find "from": '+printOp(from));
+		} 
+	}
+	if(because_n===undefined){
+		because_n = this.find(imp(from,to));
+		if(because_n==-1){
+			if(this.verbose)
+				this.log('can\'t from '+printOp(from)+' prove '+printOp(to))
+			throw new ProveError('can not find imp("from","to"): '+printOp(imp(from,to)));
+		} 
+	}
 	
-	because_n = this.find(imp(from,to),hints.because);
-	if(because_n==-1){
-		if(this.verbose)
-			this.log('can\'t from '+printOp(from)+' prove '+printOp(to))
-		throw new ProveError('can not find imp("from","to"): '+printOp(imp(from,to)));
-	} 
+	// попытки упростить
+	var from_ = from;
+	var to_ = to;
+	var changed = false;
+	this.log_disable = true;
+	while(true){
+		var simplified = simplify(imp(from,to));
+		if(!simplified || 
+			!(simplified instanceof Op) ||
+			simplified.which!='||' ||
+			!(simplified.args[0] instanceof Op) ||
+			simplified.args[0].which!='!'
+			)	break;
+		
+		if(this.find(simplified.args[0].args[0],from_n)==-1 ||
+			this.find(simplified,because_n)==-1){
+				if(0){ // осень часто неудачные
+					this.log_disable = false;
+					this.log('simplify is failed ('+printOp(from_)+' => '+printOp(to_)+
+						') --> ('+printOp(simplified.args[0].args[0])+' => '+printOp(simplified.args[1])+')');
+				}
+				break;
+		}
+		changed = true;
+		from = simplified.args[0].args[0];
+		to = simplified.args[1];
+	}
+	this.log_disable = false;
+	if(changed)
+		this.log('simplified (('+printOp(from_)+') => ('+printOp(to_)+')) --> (('+printOp(from)+') => ('+printOp(to)+'))');
 	
-	var x = this.add(to,hints.name);
+	// добавляем, сообщаем
+	var x = this.add(to,name);
 	this.log('prove '+this.print(x.no)+
-		(hints.from===undefined?' from '+this.print(from_n):
-			this.verbose?' (from '+this.print(from_n)+')':'')+
-		(hints.because===undefined?' because '+this.print(x.no):
-			this.verbose?' (because '+this.print(x.no)+')':'')
+		(!from_no_obj?' from found '+this.print(from_n):
+			this.verbose?' (from '+this.print(from_n)+')':' from '+this.shortPrint(from_n))+
+		(!because_no_obj?' because found '+this.print(because_n):
+			this.verbose?' (because '+this.print(because_n)+')':' because '+this.shortPrint(because_n))
 	);
+	/*
+	for(var i=0; i<this.length; i++)
+		console.log(this.print(i))
+	*/
 	return x;
 }
 
@@ -403,7 +585,6 @@ DBconstructor.prototype.prove = function(from,to,hints){
 			fun(divisor);
 		}
 	}
-	
 function simplify(tree){ // находит поддерево, повторяющееся 2 или более раз, такое, что 
 	// переменные этих поддеревьев не содержатся вне этих поддеревьев
 	// заменяет эти поддеревья на одну переменную, и возвращает измененное дерево
@@ -424,7 +605,7 @@ function simplify(tree){ // находит поддерево, повторяю�
 			var stat = forEachSubtree(op.args[0],fun)
 			var stat2 = forEachSubtree(op.args[1],fun)
 			stat.size += stat2.size+1;
-			for(x in stat2.stat){
+			for(var x in stat2.stat){
 				if(x in stat.stat)
 					stat.stat[x]+=stat2.stat[x];
 				else
@@ -437,7 +618,7 @@ function simplify(tree){ // находит поддерево, повторяю�
 	}
 	function stat2string(stat) { // сортирует и в строку
 		var strs = [];
-		for(x in stat)
+		for(var x in stat)
 			strs.push(x+':'+stat[x]);
 		return strs.sort().join(';')
 	}
@@ -509,7 +690,7 @@ function simplify(tree){ // находит поддерево, повторяю�
 		return doSequence2;
 	}
 	function findGroup(doSequence,treeStat) { // ищем группу
-		for(var seq_i=doSequence.length-1; seq_i>=0; seq_i--) // начиная с самых больших поддеревьев
+		for(var seq_i=0; seq_i<doSequence.length; seq_i++) // начиная с самых маленьких поддеревьев
 			for(var seq_j=0; seq_j<doSequence[seq_i].length; seq_j++){
 				var predGroup = doSequence[seq_i][seq_j]; // предГруппа
 				
@@ -596,47 +777,48 @@ function simplify(tree){ // находит поддерево, повторяю�
 	}
 
 	var changed = false;
-	while(true){ // пока можем найти группу
-		var treeStat = forEachSubtree(tree).stat;
-		var predGroups = makeResonablePredGroups(treeStat); 
-			// объект, каждая строка stat индексирует 
-			// объект(массив предГрупп), каждый размер поддерева индексирует 
-			// массив(предГруппа), набор из
-				// объект
-					// op - ссылку на поддерево
-					// used - использовалось ли в группе
-			// и свойства
-				// stat
-				// size
-		var doSequence = fillPredGroups(tree,predGroups); 
-			// массив, каждый размер поддерева индексирует, а птом просто набор из
-			// массив, набор из
-			// указатель на предГруппу
-		//console.log(JSON.stringify(predGroups))
-		//console.log(JSON.stringify(doSequence))
-			
-		doSequence = sortCompressDoSequence(doSequence);
-		//console.log(JSON.stringify(doSequence))
-		var group = findGroup(doSequence,treeStat)
-			//массив ссылок на дерево
-		if(group){
-			/*
-			var strArr = []
-			for(var i=0; i<group.length; i++)
-				strArr.push(printOp(group[i]));
-			console.log(strArr.join(','))
-			*/
-			tree = replaceGroup(group,tree);
-			//console.log(printOp(tree))
-			changed = true;
-		} 
-		else break; // не нашли ни одной группы
+	var treeStat = forEachSubtree(tree).stat;
+	var predGroups = makeResonablePredGroups(treeStat); 
+		// объект, каждая строка stat индексирует 
+		// объект(массив предГрупп), в котором каждый размер поддерева индексирует 
+		// массив(предГруппа), набор из
+			// объект
+				// op - ссылку на поддерево
+				// used - использовалось ли в группе
+		// и свойства
+			// stat
+			// size
+	var doSequence = fillPredGroups(tree,predGroups); 
+		// массив, каждый размер поддерева индексирует, а птом просто набор из
+		// массив, набор из
+		// указатель на предГруппу
+	//console.log(JSON.stringify(predGroups))
+	//console.log(JSON.stringify(doSequence))
+		
+	doSequence = sortCompressDoSequence(doSequence);
+	//console.log(JSON.stringify(doSequence))
+	var group = findGroup(doSequence,treeStat)
+		//массив ссылок на дерево
+	if(group){
+		/*
+		var strArr = []
+		for(var i=0; i<group.length; i++)
+			strArr.push(printOp(group[i]));
+		console.log(strArr.join(','))
+		*/
+		var new_tree = replaceGroup(group,tree);
+		//console.log(printOp(tree))
+		//changed = true;
+		//if(eq_tree(tree,new_tree).OK)
+			//console.log('SIMPLIFY don\'t change: '+printOp(tree)+' '+printOp(new_tree))
+		return new_tree;
 	} 
-	if(changed)	return tree;
-	else return undefined;
+	else 
+		return undefined;
 }
-//============================ $3
-//---------------------------- п1
+DB.log('============================ $3 Логические теории')
+
+DB.log('---------------------------- п1 Аксиомы')
 
 var links = {
 	A: new Link('A'),
@@ -651,175 +833,294 @@ var B_ = links.B_;
 var C = links.C;
 var D = links.D;
 
-var S1 = DB.addAxiom(parse('A||A=>A'),'S1')
-var S2 = DB.addAxiom(parse('A=>A||B'),'S2')
-var S3 = DB.addAxiom(parse('A||B=>B||A'),'S3')
-var S4 = DB.addAxiom(parse('(A=>B)=>(C||A=>C||B)'),'S4')
+var S1 = DB.addAxiom('A||A=>A','S1')
+var S2 = DB.addAxiom('A=>A||B','S2')
+var S3 = DB.addAxiom('A||B=>B||A','S3')
+var S4 = DB.addAxiom('(A=>B)=>(C||A=>C||B)','S4')
 
-function contradiction([A,B],DB) { // A; !A -> B
-	DB.log('contradiction');
-	DB.nest++;
-		var x = DB.prove(not(A),imp(A,B),{because:S2.no});
-	DB.nest--;
-	return DB.prove(A,B,{because:x.no});
-}
-
-//---------------------------- п2
-
-function C6([A,B,C],DB,hints) { // A=>B; B=>C -> A=>C
-	hints = hints||{};
-	DB.log('C6 ['+printOp(A)+','+printOp(B)+','+printOp(C)+'] A=>B; B=>C -> A=>C');
-	DB.nest++;
-		var x = DB.prove(imp(B,C),imp(imp(A,B),imp(A,C)),{from:hints.second,because:S4.no});
-	DB.nest--;
-	return DB.prove(imp(A,B),imp(A,C),{from:hints.first,because:x.no,name:hints.name});
-}
-var C7 = C6([A,or(A,B),or(B,A)],DB,{first:S2.no,second:S3.no,name:'C7'});
-var C8 = C6([A,or(A,A),A],DB,{first:S2.no,second:S1.no,name:'C8'});
-function C9([A,B],DB){
-	return DB.prove(B,imp(A,B),{because:C7.no});
-}
-var C10 = DB.prove(parse('A=>A'),parse('A||!A'),{because:S3.no,name:'C10'})
-var C11 = DB.check(imp(A,not(not(A))));
-			DB.prove(parse('B=>!!B'),parse('!A||B=>!A||!!B'),{from:C11.no,because:S4.no})
-var C12 = C6([parse('!A||B'),parse('!A||!!B'),parse('!B=>!A')],DB,{name:'C12'})
-var pre_C13 = DB.prove(parse('C||!A=>!A||C'),parse('(!B||C=>C||!A)=>(!B||C=>!A||C)'),{because:S4.no});
-function C13([A,B,C],DB){//A=>B -> (B=>C)=>(A=>C)
-	DB.log('C13 ['+printOp(A)+','+printOp(B)+','+printOp(C)+'] A=>B -> (B=>C)=>(A=>C)');
-	DB.nest++;
-		var x = DB.prove(imp(A,B),imp(not(B),not(A)),{because:C12.no});
-		x = DB.prove(imp(not(B),not(A)),imp(or(C,not(B)),or(C,not(A))),{from:x.no,because:S4.no})
-		x = C6([or(not(B),C),or(C,not(B)),or(C,not(A))],DB,{first:S3.no,second:x.no});
-	DB.nest--;
-	return DB.prove(imp(imp(B,C),or(C,not(A))),imp(imp(B,C),imp(A,C)),{from:x.no,because:pre_C13.no});
-}
-C13([imp(B,C),parse('C||!B'),parse('C||!A')],DB)
-C6([parse('A=>B'),parse('!B=>!A'),parse('C||!B=>C||!A')],DB)
-C6([parse('A=>B'),parse('C||!B=>C||!A'),parse('(B=>C)=>C||!A')],DB)
-C6([parse('A=>B'),parse('(B=>C)=>C||!A'),parse('(B=>C)=>(A=>C)')],DB)
-
-//---------------------------- п3
-
-			DB.prove(parse('!A=>(A=>B_)'),parse('((A=>B_)||!A)=>((A=>B_)||(A=>B_))'));
-function C14([A,B,B_],DB){//A=>B; A=>(B=>B_) -> A=>B_
-	DB.log('C14 ['+printOp(A)+','+printOp(B)+','+printOp(B_)+'] A=>B; A=>(B=>B_) -> A=>B_');
-	DB.nest++;
-		var x = C13([A,B,B_],DB);
-		C6([A,imp(B,B_),imp(A,B_)],DB,{second:x.no});
-		DB.prove(imp(A,imp(A,B_)),or(imp(A,B_),not(A)),{because:S3.no});
-		DB.prove(or(imp(A,B_),not(A)),or(imp(A,B_),imp(A,B_)));
-	DB.nest--;
-	return DB.prove(or(imp(A,B_),imp(A,B_)),imp(A,B_));
-}
-function makeTheoreme(links,DB,premise,fun){
-	var real_prove = DB.prove;
-	var fake_nest = DB.nest;
-
-	function fake_prove(from,to){
-		var res;
-		var real_nest = DB.nest;
-		DB.nest = fake_nest;
-		DB.log('fake_prove from '+printOp(from)+' to '+printOp(to));
-		
-		try{
-			DB.prove = real_prove;
-			DB.nest = fake_nest+1;
-				DB.log('try real_prove')
-				res = DB.prove(from,to);
-			DB.nest--;
-			DB.log('fake_proved ----');
-			DB.nest = real_nest;
-			DB.prove = fake_prove;
-			return res;
-		}catch(err){ if(err instanceof ProveError){
+function makeRule(name,description,target,fun){
+	return function(links,hints={}){
+		var strs = [];
+		for(var i=0; i<links.length; i++){
+			if(typeof links[i] ==='string')
+				links[i] = parse(links[i]);
+			strs.push(printOp(links[i]));
+		}
+		var tmp;
+		var trg = target(links);
+		DB.log(hints.name+': '+printOp(trg)+' _by_ '+name+' ['+strs.join(',')+'] '+description);
+		DB.nest++;
 			try{
-				DB.prove = real_prove;
-				DB.nest = fake_nest+1;
-					DB.log('try C6')
-					res = C6([premise,from,to],DB)
-				DB.nest--;
-				DB.log('fake_proved ----');
-				DB.nest = real_nest;
-				DB.prove = fake_prove;
-				return res;
-			}catch(err){ if(err instanceof ProveError){
-				try{
-					DB.prove = real_prove;
-					DB.nest = fake_nest+1;
-						DB.log('try C14')
-						try{
-							DB.nest = fake_nest+2;
-								DB.log('try prove proved')
-								DB.prove(from,imp(premise,from),{because:C7.no});
-								DB.log('proved proved');
-						}catch(err){ if(err instanceof ProveError){
-							DB.prove = real_prove;
-							DB.nest = fake_nest+1;
-						}else throw err;}
-						res = C14([premise,from,to],DB)
-					DB.nest--;
-					DB.log('fake_proved ----');
-					DB.nest = real_nest;
-					DB.prove = fake_prove;
-					return res;
-				}catch(err){ if(err instanceof ProveError){
-					DB.prove = fake_prove;
-					DB.nest = fake_nest;
-					DB.log('fake_prove failed ----');
-					throw err;
-				}else throw err;}
-			}else throw err;}
-		}else throw err;}
+				tmp = DB.check(trg)
+				var str;
+				if(tmp instanceof Array){
+					str = tmp[tmp.length-1]
+					str = '('+(tmp.length-1)+')'+printOp(tmp.st)
+				}
+				else str = DB.print(tmp.no)
+				DB.log('fast exist '+str)
+			}
+			catch(err){
+				if(err instanceof ProveError){
+					hints.already_checked = DB.length
+					tmp = fun(links,hints);
+				}
+				else throw err;
+			}
+		DB.nest--;
+		return tmp;
 	}
-
-	DB.prove = fake_prove;
-		DB.log('begin makeTheoreme from '+printOp(premise));
-			DB.nest++;
-				var res = fun(links,DB);
-			DB.nest--;
-		DB.log('end makeTheoreme');
-	DB.prove = real_prove;
-	return res;
 }
 
-function C15([A],DB){
-	DB.log('C15 ['+printOp(A)+'] !A=>A -> A');
-	DB.nest++;
-		DB.prove(imp(not(A),A),imp(or(A,not(A)),or(A,A)));
-		DB.prove(or(A,not(A)),or(A,A))
-	DB.nest--;
-	return DB.prove(or(A,A),A);
+DB.contradiction = makeRule('contradiction','A; !A -> B',([A,B])=>B, ([A,B],{True,False,name}={})=>{
+	var x = DB.prove(not(A),imp(A,B),{from:False, because:S2, name:'contradiction.'+name});
+	return DB.prove(A,B,{from:True, because:x, name});
+})
+
+DB.log('---------------------------- п2 Первые следствия')
+
+DB.C6 = makeRule('C6','A=>B; B=>C -> A=>C',([A,B,C])=>imp(A,C), ([A,B,C],{first,second,name}={})=>{
+	var x = DB.prove(imp(B,C),imp(imp(A,B),imp(A,C)),{from:second, because:S4, name:'C6.'+name});
+	return DB.prove(imp(A,B),imp(A,C),{from:first, because:x, name});
+})
+var C7 = DB.C6([A,or(A,B),or(B,A)],{first:S2, second:S3, name:'C7'}); // A=>B||A
+var C8 = DB.C6([A,or(A,A),A],{first:S2, second:S1, name:'C8'}); // A=>A
+DB.C9 = makeRule('C9','B -> A=>B',([A,B])=>imp(A,B), ([A,B],{to,name}={})=>{
+	return DB.prove(B,imp(A,B),{from:to, because:C7, name});
+})
+var C10 = DB.prove('A=>A','A||!A',{from:C8, because:S3, name:'C10'})
+var C11 = DB.check('A=>!!A', C10);
+var C12_pre = DB.prove('B=>!!B','!A||B=>!A||!!B',{from:C11, because:S4, name:'C12_pre'})
+var C12 = DB.C6(['!A||B','!A||!!B','!B=>!A'],{first:C12_pre, second:S3, name:'C12'}) // (A=>B)=>(!B=>!A)
+var C13_pre = DB.prove('C||!A=>!A||C','(!B||C=>C||!A)=>(!B||C=>!A||C)',{from:S3, because:S4, name:'C13_pre'});
+DB.C13 = makeRule('C13','A=>B -> (B=>C)=>(A=>C)',([A,B,C])=>imp(imp(B,C),imp(A,C)), ([A,B,C],{from,name}={})=>{
+	var x = DB.prove(imp(A,B),imp(not(B),not(A)),{from:from, because:C12, name:'C13_1.'+name});
+	x = DB.prove(imp(not(B),not(A)),imp(or(C,not(B)),or(C,not(A))),{from:x, because:S4, name:'C13_2.'+name})
+	x = DB.C6([or(not(B),C),or(C,not(B)),or(C,not(A))],{first:S3, second:x, name:'C13_3.'+name});
+	return DB.prove(imp(imp(B,C),or(C,not(A))),imp(imp(B,C),imp(A,C)),{from:x, because:C13_pre, name});
+})
+var x = DB.C13([imp(B,C),'C||!B','C||!A'],  {from:S3, name:'My1_pre1'})
+var y = DB.C6(['A=>B','!B=>!A','C||!B=>C||!A'], {first:C12, second:S4, name:'My1_pre2'})
+x = DB.C6(['A=>B','C||!B=>C||!A','(B=>C)=>C||!A'], {first:y, second:x, name:'My1_pre3'})
+DB.C6(['A=>B','(B=>C)=>C||!A','(B=>C)=>(A=>C)'], {first:x, second:C13_pre, name:'My1'})
+
+DB.log('---------------------------- п3 Методы доказательства')
+
+var C14_pre = DB.prove('!A=>(A=>B_)','((A=>B_)||!A)=>((A=>B_)||(A=>B_))', {from:S2, because:S4, name:'C14_pre'});
+DB.C14 = makeRule('C14','A=>B; A=>(B=>B_) -> A=>B_',([A,B,B_])=>imp(A,B_), ([A,B,B_],{from,because,name}={})=>{
+	var x = DB.C13([A,B,B_],{from:from, name:'C14_1.'+name});
+	x = DB.C6([A,imp(B,B_),imp(A,B_)],{first:because, second:x, name:'C14_2.'+name});
+	x = DB.prove(imp(A,imp(A,B_)),or(imp(A,B_),not(A)), {from:x, because:S3, name:'C14_3.'+name});
+	x = DB.prove(or(imp(A,B_),not(A)),or(imp(A,B_),imp(A,B_)), {from:x, because:C14_pre, name:'C14_4.'+name});
+	return DB.prove(or(imp(A,B_),imp(A,B_)),imp(A,B_), {from:x, because:S1, name:name});
+})
+function makeTheoreme(pr_name,premise/*не схема*/,conseq,links,fun,hints={}) {
+	if(typeof premise === 'string') premise = parse(premise);
+	if(typeof conseq === 'string') conseq = parse(conseq);
+	var real_prove = DB.prove;
+	var real_check = DB.check;
+	var subDBs = makeTheoreme.subDBs;
+	var level = subDBs.length;
+	
+	function hint_pop(hint){
+		if(level==0 && hint instanceof Array)
+			return hint[0];
+		else if(hint instanceof Array)
+			while(hint.length > level+1)
+				hint.pop()
+		return hint;
+	}
+	function hint_push(hint,x,level){
+		if(!(hint instanceof Array)) hint = [hint]
+		if(hint[level+1] !==undefined) throw 'overwrite in hint'
+		hint[level+1] = x;
+		return hint;
+	}
+	
+	/*
+	 * hint в стеке теорий - стек hint-ов в каждой теории, 
+	 * но может содержать пропуски:
+	 * undefined говорит о том, что на данном уровне теоремы нет (и ее искать не стоит на данном уровне)
+	 * null говорит, что на данном уровне может находиться теорема
+	 */
+	function is_fake(st,hint) { // если есть в верхней DB, то тоже, что check, иначе вернет undefined
+		if(hint){
+			if(hint[level+1]){
+				hint[level+1] = subDBs[level].check(st,hint[level+1])
+				return hint;
+			}
+			else if(hint[level+1]===null){
+				try{
+					hint[level+1] = subDBs[level].check(st)
+					return hint;
+				}
+				catch(err){if(err instanceof ProveError){
+						hint[level+1] = undefined;
+						return undefined;
+					}
+					else throw err;
+				}
+			}
+			else return undefined;
+		}
+		else{
+			hint = [];
+				try{
+					hint[level+1] = subDBs[level].check(st)
+					for(var i=0; i<=level; i++)
+						hint[i] = null;
+					return hint;
+				}
+				catch(err){if(err instanceof ProveError){
+						return undefined;
+					}
+					else throw err;
+				}
+		}
+		throw 'not implemented'
+	}
+	
+	function fake_check(st,hint){
+		if(typeof st === 'string') st = parse(st)
+		var res = is_fake(st,hint);
+		if(res) return res;
+		DB.prove = real_prove;
+		DB.check = real_check;
+			try{
+				res = DB.check(st,hint_pop(hint));
+			}
+			catch(err){
+				if(err instanceof ProveError){
+					DB.prove = fake_prove;
+					DB.check = fake_check;
+				}
+				throw err;
+			}
+		DB.prove = fake_prove;
+		DB.check = fake_check;
+		return res;
+	}
+	function fake_prove(from,to,{from:from_hint, because:because_hint, name}={}){
+		if(typeof from === 'string') from = parse(from)
+		if(typeof to === 'string') to = parse(to)
+			
+		var from_fake = is_fake(from,from_hint)
+		var because_fake = is_fake(imp(from,to),because_hint);
+		var res;
+		
+		/*
+		 *	from	because
+		 
+		 *	real	real	real_prove
+		 *	   B;     B=>C  ->    C
+		 
+		 *	fake	real	C6
+		 *	A=>B;     B=>C  -> A=>C
+		 
+		 *	real	fake	prove_proved+C14
+		 *	   B; A=>(B=>C) -> A=>C
+		 
+		 *	fake	fake	C14
+		 *	A=>B; A=>(B=>C) -> A=>C
+		 */
+		if(because_fake) { // C14
+			if(!from_fake) { // proved
+				DB.log('fake_prove('+level+')proved: from '+printOp(from)+' to '+printOp(to))
+				DB.nest++;
+					DB.prove = real_prove;
+					DB.check = real_check;
+						from_fake = DB.prove(from,imp(premise,from),{from:hint_pop(from_hint), because:C7, name:'prove_proved '+name})
+						from_fake = hint_push(from_fake,subDBs[level].add(from,'proved '+name),level);
+					DB.prove = fake_prove;
+					DB.check = fake_check;
+				DB.nest--;
+			}
+				DB.log('fake_prove('+level+')C14: from '+printOp(from)+' to '+printOp(to))
+				DB.nest++;
+					DB.prove = real_prove;
+					DB.check = real_check;
+						res = DB.C14([premise,from,to],{from:hint_pop(from_fake), because:hint_pop(because_fake), name})
+						res = hint_push(res,subDBs[level].add(to,name),level);
+					DB.prove = fake_prove;
+					DB.check = fake_check;
+				DB.nest--;
+		}
+		else
+			if(from_fake) { // C6
+				DB.log('fake_prove('+level+')C6: from '+printOp(from)+' to '+printOp(to))
+				DB.nest++;
+					DB.prove = real_prove;
+					DB.check = real_check;
+						res = DB.C6([premise,from,to],{first:hint_pop(from_fake), second:hint_pop(because_hint), name})
+						res = hint_push(res,subDBs[level].add(to,name),level);
+					DB.prove = fake_prove;
+					DB.check = fake_check;
+				DB.nest--;
+			}
+			else { // real
+				DB.log('fake_prove('+level+')real: from '+printOp(from)+' to '+printOp(to))
+				DB.nest++;
+					DB.prove = real_prove;
+					DB.check = real_check;
+						res = DB.prove(from,to,{from:hint_pop(from_hint), because:hint_pop(because_hint), name})
+					DB.prove = fake_prove;
+					DB.check = fake_check;
+				DB.nest--;
+			}
+		return res;
+	}
+	
+	subDBs.push(new DBconstructor())
+	subDBs[level].log_disable = true;
+	subDBs[level].no_scheme = true;
+	var pr_hint = [C8]; //A=>A
+		pr_hint[level+1] = subDBs[level].add(premise,pr_name)
+	hints[pr_name] = pr_hint;
+		DB.log('makeTheoreme('+level+') from '+printOp(premise)+' to '+printOp(conseq)+' - '+hints.name);
+		DB.nest++;
+			DB.prove = fake_prove;
+			DB.check = fake_check;
+				var res = fun(links,hints);
+			DB.prove = real_prove;
+			DB.check = real_check;
+		DB.nest--;
+	subDBs[level].check(conseq,(res && res instanceof Array)?res[level+1]:undefined);
+	subDBs.pop();
+	return hint_pop(res);
 }
-var C16 = makeTheoreme([A],DB,not(not(A)),function([A],DB){
-	makeTheoreme([A],DB,not(A),function([A],DB){
-		return contradiction([not(A),A],DB);
-	})
-	return C15([A],DB);
+makeTheoreme.subDBs = [];
+
+DB.C15 = makeRule('C15','!A=>A -> A',([A])=>A, ([A],{from,name}={})=>{
+	var x = DB.prove(imp(not(A),A),imp(or(A,not(A)),or(A,A)), {from:from, because:S4, name:'C15_internal_1'});
+	x = DB.prove(or(A,not(A)),or(A,A), {from:C10, because:x, name:'C15_internal_2'});
+	return DB.prove(or(A,A),A, {from:x, because:S1, name:name});
 });
-
-var C17 = makeTheoreme([A,B],DB,parse('!B=>!A'),function([A,B],DB){
-	return makeTheoreme([A,B],DB,A,function([A,B],DB){
-		makeTheoreme([A,B],DB,not(B),function([A,B],DB){
-			DB.prove(not(B),not(A));
-			contradiction([A,B],DB);
+var C16 = makeTheoreme('nnA',not(not(A)),A, [A],([A],{nnA})=>{
+	var x = makeTheoreme('nA',not(A),A, [A],([A], {nA})=>{
+		return DB.contradiction([not(A),A],{True:nA, False:nnA, name:'C16_internal'});
+	})
+	return DB.C15([A], {from:x, name:'C16'});
+});
+var C17 = makeTheoreme('premise','!B=>!A','A=>B', [A,B],([A,B],{premise})=>{
+	return makeTheoreme('_A',A,B, [A,B],([A,B],{_A})=>{
+		var x = makeTheoreme('nB',not(B),B, [A,B],([A,B],{nB})=>{
+			var x = DB.prove(not(B),not(A),{from:nB, because:premise, name:'C17_internal_1'});
+			return DB.contradiction([A,B],{True:_A, False:x, name:'C17_internal_2'});
 		})
-		return C15([B],DB);
+		return DB.C15([B],{from:x, name:'C17'});
 	})
 });
 
-function C18([A,B,C],DB){
-	DB.log('C18 ['+printOp(A)+','+printOp(B)+','+printOp(C)+'] A||B; A=>C; B=>C -> C');
-	DB.nest++;
-		var x = DB.prove(imp(B,C),imp(or(A,B),or(A,C)),{because:S4.no})
-		var y = DB.prove(imp(A,C),imp(or(C,A),or(C,C)),{because:S4.no})
-		x = DB.prove(or(A,B),or(A,C),{because:x.no});
-		x = DB.prove(or(A,C),or(C,A),{from:x.no,because:S3.no});
-		x = DB.prove(or(C,A),or(C,C),{from:x.no,because:y.no});
-	DB.nest--;
-	return DB.prove(or(C,C),C,{from:x.no,because:S1.no});
-}
+DB.C18 = makeRule('C18','A||B; A=>C; B=>C -> C',([A,B,C])=>C, ([A,B,C],{diff,first,second,name})=>{
+	var x = DB.prove(imp(B,C),imp(or(A,B),or(A,C)),{from:second,because:S4,name:'C18_internal_1'})
+	var y = DB.prove(imp(A,C),imp(or(C,A),or(C,C)),{from:first,because:S4,name:'C18_internal_2'})
+	x = DB.prove(or(A,B),or(A,C),{from:diff, because:x,name:'C18_internal_3'});
+	x = DB.prove(or(A,C),or(C,A),{from:x, because:S3,name:'C18_internal_4'});
+	x = DB.prove(or(C,A),or(C,C),{from:x, because:y,name:'C18_internal_5'});
+	return DB.prove(or(C,C),C,{from:x, because:S1, name:name});
+})
 
-//---------------------------- п4
+DB.log('---------------------------- п4 Коньюнкция')
 
 function and(x,y){
 	return not(or(not(x),not(y)));
@@ -832,57 +1133,158 @@ function and(x,y){
 		},
 		read_expr_or
 	])
-
-function C20([A,B],DB){
-	makeTheoreme([A,B],DB,not(and(A,B)),function([A,B],DB){
-		var x = DB.prove(not(and(A,B)),or(not(A),not(B)),{because:C16.no})
-		DB.prove(A,not(B),{because:x.no});
-		contradiction([B,and(A,B)]);
-	})
-	C15([and(A,B)],DB);
-}
-
-var x = DB.check(parse('!A||!B=>!(A&&B)'))
-var y = C6([not(A),parse('!A||!B'),parse('!(A&&B)')],DB,{first:S2.no,second:x.no})
-var C21_L = DB.prove(y.st,parse('A&&B=>A'),{from:y.no,because:C17.no})
-var y = C6([not(B),parse('!A||!B'),parse('!(A&&B)')],DB,{first:C7.no,second:x.no})
-var C21_R = DB.prove(y.st,parse('A&&B=>B'),{from:y.no,because:C17.no})
-
-if(1)
-for(var i=0; i<DB.length; i++){
-	var op = simplify(DB[i].st);
-	if(op){
-		console.log('['+i+']'+printOp(DB[i].st))
-		console.log('=== '+printOp(op));
+printArray.push(function(op,parent_prio) { // &&
+	var cur_prio = 2;
+	if(op.which=='!' 
+		&& op.args[0] instanceof Op && op.args[0].which=='||'
+		&& op.args[0].args[0] instanceof Op && op.args[0].args[0].which=='!'
+		&& op.args[0].args[1] instanceof Op && op.args[0].args[1].which=='!'
+	) {
+		if(parent_prio<=cur_prio)
+			return '('+printOp(op.args[0].args[0].args[0],cur_prio)+'&&'+printOp(op.args[0].args[1].args[0],cur_prio)+')';
+		else return printOp(op.args[0].args[0].args[0],cur_prio)+'&&'+printOp(op.args[0].args[1].args[0],cur_prio);
 	}
-}
+})
+/*
+var tmp = printArray[length-2];
+printArray[length-2] = printArray[length-1];
+printArray[length-1] = tmp;
+*/
 
+DB.C20 = makeRule('C20','A; B -> A&&B',([A,B])=>and(A,B), ([A,B],{first,second,name}={})=>{
+	var x = makeTheoreme('contrary',not(and(A,B)),and(A,B),[A,B],([A,B],{contrary})=>{
+		var x = DB.prove(not(and(A,B)),or(not(A),not(B)),{from:contrary,because:C16,name:'C20_internal_1.'+name})
+		x = DB.prove(A,not(B),{from:first,because:x,name:'C20_internal_2.'+name});
+		return DB.contradiction([B,and(A,B)],{True:second,False:x,name:'C20_internal_3.'+name});
+	})
+	return DB.C15([and(A,B)],{from:x,name:'C20'});
+})
 
+var x = DB.check('!A||!B=>!(A&&B)')
+var y = DB.C6(['!A','!A||!B','!(A&&B)'],{first:S2,second:x,name:'C21_L_pre'})
+var C21_L = DB.prove(y.st,'A&&B=>A',{from:y,because:C17,name:'C21_L'})
+var y = DB.C6(['!B','!A||!B','!(A&&B)'],{first:C7,second:x,name:'C21_R_pre'})
+var C21_R = DB.prove(y.st,'A&&B=>B',{from:y,because:C17,name:'C21_R'})
 
+DB.log('---------------------------- п5 Эквивалентность')
 
-
-
-
-
-//---------------------------- п5
-
-function eqlog(a,b){
+function eql(a,b){
 	return and(imp(a,b),imp(b,a));
 }
+	var read_expr_eql = (str,pos)=> read_any(str,pos,collect,[
+		(str,pos)=>{
+			var r = read_seq(str,pos,need(0,2),[read_expr_imp,txt('<=>').exec,read_expr_imp]);
+			if(!isGood(r)) return addErrMessage(r,' - in "expr=>expr"');
+			return eql(r[0],r[1]);
+		},
+		read_expr_imp
+	])
+expr = new Pattern(read_expr_eql);
+printArray.push(function(op,parent_prio) { // <=>
+	var cur_prio = 3;
+	function selectOp(){
+		var op = arguments[0]
+		for(var i =1; i<arguments.length; i++)
+			op = op.args[arguments[i]];
+		//arguments[0] = -1
+		//console.log(JSON.stringify(arguments) + printOp(op))
+		return op;
+	}
+	if(op.which=='!' 
+		&& selectOp(op,0) instanceof Op && selectOp(op,0).which=='||'
+		&& selectOp(op,0,0) instanceof Op && selectOp(op,0,0).which=='!'
+		&& selectOp(op,0,1) instanceof Op && selectOp(op,0,1).which=='!'
+		&& selectOp(op,0,0,0) instanceof Op && selectOp(op,0,0,0).which=='||'
+		&& selectOp(op,0,1,0) instanceof Op && selectOp(op,0,1,0).which=='||'
+		&& selectOp(op,0,0,0,0) instanceof Op && selectOp(op,0,0,0,0).which=='!'
+		&& selectOp(op,0,1,0,0) instanceof Op && selectOp(op,0,1,0,0).which=='!'
+		&& eq_tree(selectOp(op,0,0,0,0,0),selectOp(op,0,1,0,1)).OK
+		&& eq_tree(selectOp(op,0,1,0,0,0),selectOp(op,0,0,0,1)).OK
+	) {
+		if(parent_prio<=cur_prio)
+			return '('+printOp(selectOp(op,0,1,0,1),cur_prio)+'<=>'+printOp(selectOp(op,0,0,0,1),cur_prio)+')';
+		else return printOp(selectOp(op,0,1,0,1),cur_prio)+'<=>'+printOp(selectOp(op,0,0,0,1),cur_prio);
+	}
+})
 
+DB.C22_1 = makeRule('C22-1','A<=>B -> B<=>A',([A,B])=>eql(B,A), ([A,B],{from,name}={})=>{
+	DB.prove(eql(A,B),imp(A,B))
+	DB.prove(eql(A,B),imp(B,A))
+	DB.C20([imp(B,A),imp(A,B)])
+})
+var C22_1 = makeTheoreme('prem','A<=>B','B<=>A',[A,B],DB.C22_1)
+DB.C22_2 = makeRule('C22-2','A<=>B; B<=>C -> A<=>C',([A,B,C])=>eql(A,C), ([A,B,C],{first,second,name}={})=>{
+	DB.prove(eql(A,B),imp(A,B))
+	DB.prove(eql(A,B),imp(B,A))
+	DB.prove(eql(B,C),imp(B,C))
+	DB.prove(eql(B,C),imp(C,B))
+	DB.C6([A,B,C])
+	DB.C6([C,B,A])
+	DB.C20([imp(A,C),imp(C,A)]);
+})
+var C22_2 = makeTheoreme('prem','A<=>B','(B<=>C)=>(A<=>C)',[A,B,C], ([A,B,C])=>{
+	makeTheoreme('pre','B<=>C','A<=>C',[A,B,C],DB.C22_2)
+})
+
+DB.C23_1 = makeRule('C23-1','A<=>B -> !A<=>!B',([A,B])=>eql(not(A),not(B)), ([A,B])=>{
+	DB.prove(eql(A,B),imp(A,B))
+	DB.prove(eql(A,B),imp(B,A))
+	DB.prove(imp(A,B),imp(not(B),not(A)))
+	DB.prove(imp(B,A),imp(not(A),not(B)))
+	DB.C20([imp(not(A),not(B)),imp(not(B),not(A))])
+})
+var C23_1 = makeTheoreme('prem','A<=>B','!A<=>!B',[A,B],DB.C23_1)
+DB.C23_2 = makeRule('C23-2','A<=>B -> (A=>C)<=>(B=>C)',([A,B,C])=>eql(imp(A,C),imp(B,C)), ([A,B,C])=>{
+	DB.prove(eql(A,B),imp(A,B))
+	DB.prove(eql(A,B),imp(B,A))
+	DB.C13([A,B,C])
+	DB.C13([B,A,C])
+	DB.C20([imp(imp(A,C),imp(B,C)),imp(imp(B,C),imp(A,C))])
+})
+var C23_2 = makeTheoreme('prem','A<=>B','(A=>C)<=>(B=>C)',[A,B,C],DB.C23_2)
+DB.C23_3 = makeRule('C23-3','A<=>B -> (C=>A)<=>(C=>B)',([A,B,C])=>eql(imp(C,A),imp(C,B)), ([A,B,C])=>{
+	DB.prove(eql(A,B),imp(A,B))
+	DB.prove(eql(A,B),imp(B,A))
+	makeTheoreme('first',imp(C,A),imp(C,B), [C,A,B],DB.C6)
+	makeTheoreme('first',imp(C,B),imp(C,A), [C,B,A],DB.C6)
+	DB.C20([imp(imp(C,A),imp(C,B)),imp(imp(C,B),imp(C,A))])
+})
+var C23_3 = makeTheoreme('prem','A<=>B','(C=>A)<=>(C=>B)',[A,B,C],DB.C23_3)
+var S4_inv = makeTheoreme('prem','A=>B','A||C=>B||C',[A,B,C],([A,B,C])=>{
+	DB.prove(imp(A,B),imp(or(C,A),or(C,B)))
+	makeTheoreme('prem','A||C','B||C',[A,B,C], ([A,B,C])=>{
+		DB.prove('A||C','C||A')
+		DB.prove('C||A','C||B')
+		DB.prove('C||B','B||C')
+	})
+})
+DB.C23_5 = makeRule('C23-5','A<=>B -> A||C<=>B||C',([A,B,C])=>eql(or(A,C),or(B,C)), ([A,B,C])=>{
+	DB.prove(eql(A,B),imp(A,B))
+	DB.prove(eql(A,B),imp(B,A))
+	DB.prove(imp(A,B),imp(or(A,C),or(B,C)))
+	DB.prove(imp(B,A),imp(or(B,C),or(A,C)))
+	DB.C20([imp(or(A,C),or(B,C)),imp(or(B,C),or(A,C))])
+})
+var C23_5 = makeTheoreme('prem','A<=>B','A||C<=>B||C',[A,B,C],DB.C23_5)
+DB.C23_4 = makeRule('C23-4','A<=>B -> A&&C<=>B&&C',([A,B,C])=>eql(and(A,C),and(B,C)), ([A,B,C])=>{
+	DB.C23_1([A,B])
+	DB.C23_5([not(A),not(B),not(C)])
+	DB.C23_1([or(not(A),not(C)),or(not(B),not(C))])
+})
+var C23_4 = makeTheoreme('prem','A<=>B','A&&C<=>B&&C',[A,B,C],DB.C23_4)
+
+var C24_1 = DB.C20(['!!A=>A','A=>!!A']);
+var C24_2 = DB.C20(['(A=>B)=>(!B=>!A)','(!B=>!A)=>(A=>B)']);
+makeTheoreme('prem',A,'A&&A',[A,A],DB.C20)
+var C24_3 = DB.C20(['A&&A=>A','A=>A&&A'])
 
 /*todo:
-изменить prove
-	сначала проверяем на already exist
-	птом доказываем и запоминаем
-	do
-		упрощаем мелкое
-	while доказываем по запомненному
-установить везде подсказки, изменить отступы в makeTheoreme
-добавить 2 режима генерации tgf-файлов
-сделать возможность добавлять операции для печати
-доказать все логические утверждения
+доделать fast exist
+	вывод на печать и убрать повторную проверку.
+доказать все логические утверждения и прописать подсказки
 переходить к кванторным теориям
+
+добавить 2 режима генерации tgf-файлов
 */
 </script>
 </body>
